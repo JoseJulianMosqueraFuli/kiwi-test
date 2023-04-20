@@ -1,3 +1,6 @@
 Flask
 flask-bootstrap
 flask-wtf
+flask-testing
+pytest
+firebase-admin
