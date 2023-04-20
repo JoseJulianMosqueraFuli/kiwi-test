@@ -6,11 +6,12 @@ from flask_bootstrap import Bootstrap
 from flask_wtf import FlaskForm
 from wtforms.fields import StringField, PasswordField, SubmitField
 from wtforms.validators import DataRequired
-Blueprint, jsonify
 from firebase_admin import firestore, credentials, initialize_app
+from flask_cors import CORS
 
 app = Flask(__name__)
 bootstrap = Bootstrap(app)
+CORS(app)
 
 app.config['SECRET_KEY'] = 'secret_key_here'
 

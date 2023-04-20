@@ -4,3 +4,4 @@ flask-wtf
 flask-testing
 pytest
 firebase-admin
+flask-cors
