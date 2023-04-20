@@ -1,0 +1,5 @@
+{% extends 'base.html' %} {% block title %}{{super()}} Dashboard {% endblock %}
+{% block content %}
+<h1>Welcome to the Dashboard!</h1>
+<a href="{{ url_for('index') }}">Ir a Inicio</a>
+{% endblock %}
