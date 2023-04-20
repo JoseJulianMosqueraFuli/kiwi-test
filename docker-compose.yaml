@@ -7,8 +7,20 @@ services:
       - "5000:5000"
     volumes:
       - ./app:/app
+      # - ./test:/test
     environment:
       - PYTHONPATH=/app
       - FLASK_APP=main.py
       - FLASK_DEBUG=TRUE
     command: flask run --host=0.0.0.0
+#Comment this part for moment like don't requiere for build
+# test:
+#   build:
+#     context: .
+#     dockerfile: Dockerfile
+#   volumes:
+#     - ./app:/app
+#     - ./test:/test
+#   environment:
+#     - PYTHONPATH=/app
+#   command: pytest /test/test.py
