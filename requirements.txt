@@ -5,3 +5,4 @@ flask-testing
 pytest
 firebase-admin
 flask-cors
+flask-login

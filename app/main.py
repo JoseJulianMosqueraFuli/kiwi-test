@@ -1,67 +1,197 @@
 import unittest
 import math
 import firebase_admin
-from flask import Flask, render_template, request, redirect, session, url_for, flash, make_response, Blueprint, jsonify
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    session,
+    url_for,
+    flash,
+    make_response,
+    jsonify,
+)
 from flask_bootstrap import Bootstrap
 from flask_wtf import FlaskForm
 from wtforms.fields import StringField, PasswordField, SubmitField
 from wtforms.validators import DataRequired
-from firebase_admin import firestore, credentials, initialize_app
+from firebase_admin import firestore, credentials, initialize_app, auth
 from flask_cors import CORS
+
+from werkzeug.security import generate_password_hash
+from flask_login import UserMixin, login_user, LoginManager
 
 app = Flask(__name__)
 bootstrap = Bootstrap(app)
 CORS(app)
-
-app.config['SECRET_KEY'] = 'secret_key_here'
-
-class LoginForm(FlaskForm):
-    username = StringField('Nombre de usuario', validators=[DataRequired()])
-    password = PasswordField('Password', validators=[DataRequired()])
-    submit = SubmitField('Enviar')
-
-@app.cli.command()
-def test():
-    tests = unittest.TestLoader().discover('tests')
-    unittest.TextTestRunner().run(tests)
-
-@app.errorhandler(404)
-def not_found(error):
-    return render_template('404.html', error=error)
-
-@app.errorhandler(500)
-def no_server(error):
-  return render_template('500.html', error=error)  
+login_manager = LoginManager(app)
 
 
-@app.route('/')
-def index():
-    response = make_response(redirect('/dashboard'))
-    return response
-    
-
-@app.route('/dashboard', methods=['GET', 'POST'])
-def login():
-    #return 'Welcome tu login bots'
-    login_form = LoginForm()
-
-    context = {'login_form': login_form}
-    if login_form.validate_on_submit():
-        username = login_form.username.data
-        session['username'] = username
-
-        flash('Nombre de usario registrado con éxito!')
-
-        return redirect(url_for('index'))
-    
-    return render_template('dashboard.html', **context)
+app.config["SECRET_KEY"] = "secret_key_here"
 
 cred = credentials.Certificate("./keys.json")
 firebase_admin.initialize_app(
     cred, {"databaseURL": "https://kiwibot-firebase-default-rtdb.firebaseio.com/"}
 )
 
+
+class LoginForm(FlaskForm):
+    username = StringField("Nombre de usuario", validators=[DataRequired()])
+    password = PasswordField("Password", validators=[DataRequired()])
+    submit = SubmitField("Enviar")
+
+
 db = firestore.client()
+
+
+def get_users():
+    return db.collection("users").get()
+
+
+def get_user(user_id):
+    return db.collection("users").document(user_id).get()
+
+
+def user_put(user_data):
+    user_ref = db.collection("users").document(user_data.username)
+    user_ref.set({"password": user_data.password})
+
+
+class UserData:
+    def __init__(self, username, password):
+        self.username = username
+        self.password = password
+
+
+class UserModel(UserMixin):
+    def __init__(self, user_data):
+        """
+        :param user_data: UserData
+        """
+        self.id = user_data.username
+        self.password = user_data.password
+
+    @staticmethod
+    def query(user_id):
+        user_doc = get_user(user_id)
+        user_data = UserData(
+            username=user_doc.id, password=user_doc.to_dict()["password"]
+        )
+
+        return UserModel(user_data)
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    login_form = LoginForm()
+    context = {"login_form": login_form}
+
+    if login_form.validate_on_submit():
+        username = login_form.username.data
+        password = login_form.password.data
+
+        user_doc = get_user(username)
+
+        if user_doc.to_dict() is not None:
+            password_from_db = user_doc.to_dict()["password"]
+
+            if password == password_from_db:
+                user_data = UserData(username, password)
+                user = UserModel(user_data)
+
+                login_user(user)
+
+                flash("Bienvenido de nuevo")
+
+                redirect(url_for("dashboard"))
+            else:
+                flash("La informaición no coincide")
+        else:
+            flash("El usario no existe")
+
+        return redirect(url_for("index"))
+
+    return render_template("login.html", **context)
+
+
+@app.route("/signup", methods=["GET", "POST"])
+def singup():
+    signup_form = LoginForm()
+    context = {"signup_form": signup_form}
+
+    if signup_form.validate_on_submit():
+        username = signup_form.username.data
+        password = signup_form.password.data
+
+        user_doc = get_user(username)
+
+        if user_doc.to_dict() is None:
+            password_hash = generate_password_hash(password)
+            user_data = UserData(username, password_hash)
+            user_put(user_data)
+
+            user_model = UserModel(user_data)
+
+            user = auth.create_user(
+                email=username,
+                email_verified=False,
+                password=password_hash,
+                display_name=username,
+            )
+            print("Sucessfully created new user: {0}".format(user.uid))
+
+            login_user(user_model)
+
+            flash("Bienvenido!")
+
+            return redirect(url_for("dashboard"))
+
+        else:
+            flash("El usario existe!")
+
+    return render_template("signup.html", **context)
+
+
+@app.cli.command()
+def test():
+    tests = unittest.TestLoader().discover("tests")
+    unittest.TextTestRunner().run(tests)
+
+
+@app.errorhandler(404)
+def not_found(error):
+    return render_template("404.html", error=error)
+
+
+@app.errorhandler(500)
+def no_server(error):
+    return render_template("500.html", error=error)
+
+
+@app.route("/")
+def index():
+    response = make_response(redirect("/dashboard"))
+    return response
+
+
+@app.route("/dashboard", methods=["GET", "POST"])
+def dashboard():
+    # return 'Welcome tu login bots'
+    login_form = LoginForm()
+
+    context = {"login_form": login_form}
+    if login_form.validate_on_submit():
+        username = login_form.username.data
+        session["username"] = username
+
+        flash("Nombre de usario registrado con éxito!")
+
+        return redirect(url_for("index"))
+
+    return render_template("dashboard.html", **context)
+
+
 delivery_ref = db.collection("deliveries")
 bots_ref = db.collection("bots")
 
@@ -231,5 +361,5 @@ def assign_bot(order_id):
 
 #     return distance
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run()
