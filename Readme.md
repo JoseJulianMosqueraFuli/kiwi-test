@@ -33,7 +33,7 @@ The API should now be available at http://localhost:5000.
 ### POST 
 Create user
 ```jsx
-http://127.0.0.1:5000/signup
+http://127.0.0.1:5000/signup_user
 ```
 ```jsx
 {
