@@ -6,3 +6,5 @@ pytest
 firebase-admin
 flask-cors
 flask-login
+geopy
+flasgger 

@@ -1,0 +1,78 @@
+import json
+import unittest
+from unittest.mock import MagicMock, patch
+
+import main
+
+class TestCreateDelivery(unittest.TestCase):
+
+    def setUp(self):
+        self.app = main.app.test_client()
+        main.db = MagicMock()
+        main.auth = MagicMock()
+        main.uuid = MagicMock()
+
+    def test_create_delivery_success(self):
+        # Prepare the request data
+        data = {
+            "state": "created",
+            "pickup": {"pickup_lat": 40.712776, "pickup_lon": -74.005974},
+            "dropoff": {"dropoff_lat": 37.7749, "dropoff_lon": -122.4194},
+            "zone_id": "zone-1"
+        }
+        headers = {"Authorization": "Bearer token"}
+
+        # Mock the verify_id_token function to return a dummy uid
+        main.auth.verify_id_token.return_value = {"uid": "user-1"}
+
+        # Mock the uuid.uuid4() function to return a fixed string
+        main.uuid.uuid4.return_value = "delivery-id"
+
+        # Send the POST request to the create_delivery endpoint
+        response = self.app.post("/deliveries", headers=headers, json=data)
+
+        # Assert that the response is as expected
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b"Delivery created with ID: delivery-id")
+
+        # Assert that the delivery and delivery creator documents were created in Firestore
+        main.db.collection.assert_called_with("deliveries")
+        main.db.collection("deliveries").document.assert_called_with("delivery-id")
+        main.db.collection("deliveries").document().set.assert_called_with({
+            "id": "delivery-id",
+            "creation_date": main.datetime.datetime.now.return_value,
+            "state": "created",
+            "pickup": {"pickup_lat": 40.712776, "pickup_lon": -74.005974},
+            "dropoff": {"dropoff_lat": 37.7749, "dropoff_lon": -122.4194},
+            "zone_id": "zone-1",
+        })
+
+        main.db.collection.assert_called_with("deliveries_creator")
+        main.db.collection("deliveries_creator").document.assert_called_with("delivery-creator-id")
+        main.db.collection("deliveries_creator").document().set.assert_called_with({
+            "delivery_id": "delivery-id",
+            "creator_id": "user-1"
+        })
+
+    def test_create_delivery_unauthorized(self):
+        # Send a request without an Authorization header
+        response = self.app.post("/deliveries")
+
+        # Assert that the response is as expected
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.data, b"Unauthorized")
+
+    def test_create_delivery_invalid_location(self):
+        # Send a request with invalid pickup and dropoff locations
+        data = {
+            "state": "created",
+            "pickup": {"pickup_lat": 200, "pickup_lon": -74.005974},
+            "dropoff": {"dropoff_lat": 37.7749, "dropoff_lon": -200},
+            "zone_id": "zone-1"
+        }
+        headers = {"Authorization": "Bearer token"}
+        response = self.app.post("/deliveries", headers=headers, json=data)
+
+        # Assert that the response is as expected
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"Invalid pickup location, check your values", response.data)
