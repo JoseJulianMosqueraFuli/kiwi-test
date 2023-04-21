@@ -461,6 +461,12 @@ def get_deliveries():
     creator_id = request.args.get("creator_id")
     delivery_id = request.args.get("id")
 
+    if not creator_id and not id:
+        return (
+            flask.jsonify({"message": "Please provide either creator_id or id."}),
+            400,
+        )
+
     if creator_id:
         delivery_ids = [
             doc.to_dict()["delivery_id"]
