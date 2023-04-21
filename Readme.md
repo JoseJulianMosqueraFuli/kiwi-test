@@ -19,7 +19,7 @@ The project looks and uses like shown in the video:
 
 This is a very simple example, the way to use
 
-## Getting started
+### Getting started
 
 To run this API on your local machine, follow these steps:
 
@@ -30,17 +30,17 @@ Fill out the environment variables in the .env file with your Firebase project's
 Build and run the Docker container: docker-compose up --build
 The API should now be available at http://localhost:5000.
 
-## Available endpoints
+### Available endpoints
 
-## Version
+### Version
 
-### v1 deadline study case
-#### Improvements:
+#### v1 deadline study case
+##### Improvements:
   -keys security
   -test 
   -documentation.
 
 
-## Author
+### Author
 
 Built by Jose Julian Mosquera Fuli.
