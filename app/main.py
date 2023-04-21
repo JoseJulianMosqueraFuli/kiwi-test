@@ -1,6 +1,11 @@
 import unittest
-import math
 import firebase_admin
+import flask
+import json
+import uuid
+import requests
+import datetime
+
 from flask import (
     Flask,
     render_template,
@@ -20,29 +25,72 @@ from firebase_admin import firestore, credentials, initialize_app, auth
 from flask_cors import CORS
 
 from werkzeug.security import generate_password_hash
-from flask_login import UserMixin, login_user, LoginManager
+from flask_login import UserMixin, login_user
 
 app = Flask(__name__)
 bootstrap = Bootstrap(app)
 CORS(app)
-login_manager = LoginManager(app)
 
-
-app.config["SECRET_KEY"] = "secret_key_here"
+app.config["SECRET_KEY"] = "secret_key"
 
 cred = credentials.Certificate("./keys.json")
 firebase_admin.initialize_app(
     cred, {"databaseURL": "https://kiwibot-firebase-default-rtdb.firebaseio.com/"}
 )
 
+db = firestore.client()
+delivery_ref = db.collection("deliveries")
+bots_ref = db.collection("bots")
+
+FIREBASE_WEB_API_KEY = "AIzaSyDDXoYMguAPy72k_z5Zl-4cdM_b8TbwflU"
+rest_api_url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword"
+
+
+def sign_in_with_email_and_password(
+    email: str, password: str, return_secure_token: bool = True
+):
+    payload = json.dumps(
+        {"email": email, "password": password, "returnSecureToken": return_secure_token}
+    )
+
+    r = requests.post(rest_api_url, params={"key": FIREBASE_WEB_API_KEY}, data=payload)
+
+    return r.json()
+
+
+@app.route("/login_user", methods=["POST"])
+def login_user():
+    email = request.form.get("email")
+    password = request.form.get("password")
+
+    token = sign_in_with_email_and_password(email, password)
+
+    return jsonify(token)
+
+
+@app.route("/signup_user", methods=["POST"])
+def create_user():
+    data = request.get_json()
+    email = data.get("email")
+    password = data.get("password")
+    display_name = data.get("display_name")
+    disabled = data.get("disabled")
+
+    user = auth.create_user(
+        email=email,
+        email_verified=False,
+        password=password,
+        display_name=display_name,
+        disabled=disabled,
+    )
+
+    return f"Successfully created new user: {user.uid}"
+
 
 class LoginForm(FlaskForm):
     username = StringField("Nombre de usuario", validators=[DataRequired()])
     password = PasswordField("Password", validators=[DataRequired()])
     submit = SubmitField("Enviar")
-
-
-db = firestore.client()
 
 
 def get_users():
@@ -82,7 +130,7 @@ class UserModel(UserMixin):
         return UserModel(user_data)
 
 
-@app.route("/login", methods=["GET", "POST"])
+@app.route("/login_view", methods=["GET", "POST"])
 def login():
     login_form = LoginForm()
     context = {"login_form": login_form}
@@ -115,7 +163,7 @@ def login():
     return render_template("login.html", **context)
 
 
-@app.route("/signup", methods=["GET", "POST"])
+@app.route("/signup_view", methods=["GET", "POST"])
 def singup():
     signup_form = LoginForm()
     context = {"signup_form": signup_form}
@@ -192,174 +240,213 @@ def dashboard():
     return render_template("dashboard.html", **context)
 
 
-delivery_ref = db.collection("deliveries")
-bots_ref = db.collection("bots")
-
-
 @app.route("/deliveries", methods=["POST"])
 def create_delivery():
+    try:
+        headers = request.headers
+        bearer = headers.get("Authorization")
+        token = bearer.split()[1]
+        decoded_token = auth.verify_id_token(token)
+        uid = decoded_token["uid"]
+    except:
+        return "Unauthorized", 401
     data = request.json
-    delivery = {
-        "id": data["id"],
-        "creation_date": data["creation_date"],
-        "state": data["state"],
-        "pickup": {
-            "pickup_lat": data["pickup"]["pickup_lat"],
-            "pickup_lon": data["pickup"]["pickup_lon"],
-        },
-        "dropoff": {
-            "dropoff_lat": data["dropoff"]["dropoff_lat"],
-            "dropoff_lon": data["dropoff"]["dropoff_lon"],
-        },
-        "zone_id": data["zone_id"],
-    }
-    delivery_ref.document(data["id"]).set(delivery)
-    return jsonify(delivery), 201
+    creation_date = datetime.datetime.now()
+    state = data["state"]
+    pickup_lat = data["pickup"]["pickup_lat"]
+    pickup_lon = data["pickup"]["pickup_lon"]
+    dropoff_lat = data["dropoff"]["dropoff_lat"]
+    dropoff_lon = data["dropoff"]["dropoff_lon"]
+    zone_id = data["zone_id"]
 
+    if not (-90 <= pickup_lat <= 90) or not (-180 <= pickup_lon <= 180):
+        return "Invalid pickup location, check your values", 400
+    if not (-90 <= dropoff_lat <= 90) or not (-180 <= dropoff_lon <= 180):
+        return "Invalid dropoff location, check your values", 400
 
-@app.route("/deliveries/id", methods=["GET"])
-def get_deliveries_IDs():
-    id = request.args.get("id")
-    creator_id = request.args.get("creator_id")
-    if id:
-        delivery = db.collection("deliveries").document(id).get()
-        if delivery.exists:
-            return jsonify(delivery.to_dict()), 200
-        else:
-            return jsonify({"error": "Delivery not found"}), 404
-    elif creator_id:
-        deliveries = (
-            db.collection("deliveries").where("creator_id", "==", creator_id).get()
-        )
-        results = []
-        for delivery in deliveries:
-            results.append(delivery.to_dict())
-        return jsonify(results), 200
-    else:
-        return jsonify({"error": "Must provide an ID or creator ID parameter"}), 400
+    delivery_id = str(uuid.uuid4())
+    delivery_creator_id = str(uuid.uuid4())
 
-
-@app.route("/deliveries/pagination", methods=["GET"])
-def get_deliveries_pag():
-    per_page = int(request.args.get("per_page", 10))
-    page = int(request.args.get("page", 1))
-    start_at = (page - 1) * per_page
-    end_at = start_at + per_page
-    deliveries_ref = (
-        db.collection("deliveries")
-        .order_by("creation_date", direction=firestore.Query.DESCENDING)
-        .offset(start_at)
-        .limit(per_page)
+    delivery_ref = db.collection("deliveries").document(delivery_id)
+    delivery_ref.set(
+        {
+            "id": delivery_id,
+            "creation_date": creation_date,
+            "state": state,
+            "pickup": {"pickup_lat": pickup_lat, "pickup_lon": pickup_lon},
+            "dropoff": {"dropoff_lat": dropoff_lat, "dropoff_lon": dropoff_lon},
+            "zone_id": zone_id,
+        }
     )
-    deliveries = [delivery.to_dict() for delivery in deliveries_ref.stream()]
-    return jsonify(deliveries), 200
+
+    delivery_creator_ref = db.collection("deliveries_creator").document(
+        delivery_creator_id
+    )
+    delivery_creator_ref.set(
+        {
+            "delivery_id": delivery_id,
+            "creator_id": uid,
+        }
+    )
+
+    return f"Delivery created with ID: {delivery_id}"
+
+
+@app.route("/deliveries", methods=["GET"])
+def get_deliveries():
+    creator_id = flask.request.args.get("creator_id")
+
+    if creator_id:
+        delivery_ids = [
+            doc.to_dict()["delivery_id"]
+            for doc in db.collection("deliveries_creator")
+            .where("creator_id", "==", creator_id)
+            .stream()
+        ]
+
+        deliveries = [
+            doc.to_dict()
+            for doc in db.collection("deliveries")
+            .where("id", "in", delivery_ids)
+            .stream()
+        ]
+
+        if not deliveries:
+            return (
+                flask.jsonify(
+                    {"message": "No deliveries found for provided creator_id."}
+                ),
+                404,
+            )
+
+        return flask.jsonify(deliveries)
+
+    delivery_id = flask.request.args.get("id")
+    if delivery_id:
+        doc_ref = db.collection("deliveries").document(delivery_id)
+        doc = doc_ref.get()
+        if doc.exists:
+            delivery = doc.to_dict()
+            return flask.jsonify(delivery)
+        else:
+            return flask.jsonify({"message": "Delivery not found."}), 404
+
+    return (
+        flask.jsonify({"message": "Please provide an id or creator_id parameter."}),
+        400,
+    )
 
 
 @app.route("/bots", methods=["POST"])
 def create_bot():
-    bot = request.get_json()
-    bot_ref = bots_ref.document()
-    bot_id = bot_ref.id
-    bot["id"] = bot_id
-    bot_ref.set(bot)
-    return jsonify({"id": bot_id}), 201
+    data = flask.request.get_json()
+    if not data:
+        return flask.jsonify({"message": "No data provided."}), 400
+
+    lat = data["location"]["lat"]
+    lon = data["location"]["lon"]
+    if lat < -90 or lat > 90 or lon < -180 or lon > 180:
+        return flask.jsonify({"message": "Invalid latitude or longitude values."}), 400
+
+    bot_id = str(uuid.uuid4())
+    bot_doc = {
+        "id": bot_id,
+        "status": data["status"],
+        "location": {"lat": data["location"]["lat"], "lon": data["location"]["lon"]},
+        "zone_id": data["zone_id"],
+    }
+
+    db.collection("bots").document(bot_id).set(bot_doc)
+
+    return flask.jsonify(bot_doc), 201
 
 
-@app.route("/bots/<zone_id>", methods=["GET"])
-def get_bots_by_zone(zone_id):
-    bots = []
-    query = bots_ref.where("zone_id", "==", zone_id).get()
-    for doc in query:
-        bots.append(doc.to_dict())
-    return jsonify(bots)
+@app.route("/bots", methods=["GET"])
+def get_bots():
+    zone_id = flask.request.args.get("zone_id")
 
-
-@app.route("/orders/<order_id>/assign", methods=["PUT"])
-def assign_bot(order_id):
-    delivery_ref = db.collection("deliveries")
-    bots_ref = db.collection("bots")
-
-    order = delivery_ref.document(order_id).get().to_dict()
-    if order["state"] != "pending":
-        return jsonify({"message": "Order cannot be assigned."}), 400
-
-    bots = []
-    query = (
-        bots_ref.where("zone_id", "==", order["zone_id"])
-        .where("status", "==", "available")
-        .get()
-    )
-    for doc in query:
-        bots.append(doc)
+    bots = db.collection("bots").where("zone_id", "==", zone_id).get()
 
     if not bots:
-        return jsonify({"message": "No available bots."}), 400
+        return flask.jsonify({"message": "No bots found in this zone."}), 404
 
-    bot = bots[0]
-    bot_ref = bots_ref.document(bot.id)
-    bot_ref.update({"status": "busy"})
+    bot_list = []
 
-    delivery_ref.document(order_id).update({"bot_id": bot.id, "state": "assigned"})
+    for bot in bots:
+        bot_data = bot.to_dict()
+        bot_data["id"] = bot.id
+        bot_list.append(bot_data)
+
+    return flask.jsonify(bot_list)
+
+
+@app.route("/assign_bot", methods=["POST"])
+def assign_bot():
+    bot_id = request.json.get("bot_id")
+    delivery_id = request.json.get("delivery_id")
+
+    bot_ref = db.collection("bots").document(bot_id)
+    bot_data = bot_ref.get().to_dict()
+    if bot_data["status"] != "available":
+        return jsonify({"message": "Bot is not available."}), 400
+
+    delivery_ref = db.collection("deliveries").document(delivery_id)
+    delivery_data = delivery_ref.get().to_dict()
+    if delivery_data["state"] != "pending":
+        return jsonify({"message": "Delivery is not in pending state."}), 400
+
+    bot_ref.update({"status": "busy", "delivery_id": delivery_id})
+
+    delivery_ref.update({"state": "assigned"})
 
     return jsonify({"message": "Bot assigned successfully."})
 
 
-# @app.route("/orders/assign", methods=["PUT"])
-# def assign_bot():
-#     # Get all pending orders
-#     delivery_ref = db.collection("deliveries")
-#     orders_query = delivery_ref.where("state", "==", "pending").get()
+@app.route("/assign_bots_to_pending_deliveries", methods=["POST"])
+def assign_bots_to_pending_deliveries():
+    pending_deliveries = []
+    deliveries_ref = db.collection("deliveries")
+    query = deliveries_ref.where("state", "==", "pending").get()
+    for doc in query:
+        delivery_data = doc.to_dict()
+        delivery_data["id"] = doc.id
+        pending_deliveries.append(delivery_data)
 
-#     for order_doc in orders_query:
-#         order = order_doc.to_dict()
+    available_bots = []
+    bots_ref = db.collection("bots")
+    query = bots_ref.where("status", "==", "available").get()
+    for doc in query:
+        bot_data = doc.to_dict()
+        bot_data["id"] = doc.id
+        available_bots.append(bot_data)
 
-#         # Find available bots in the same zone as the order's pickup location
-#         bots_ref = db.collection("bots")
-#         bots_query = (
-#             bots_ref.where("zone_id", "==", order["zone_id"])
-#             .where("status", "==", "available")
-#             .get()
-#         )
+    for delivery in pending_deliveries:
+        assigned_bot = None
+        min_distance = float("inf")
+        for bot in available_bots:
+            bot_zone_id = bot["zone_id"]
+            delivery_zone_id = delivery["zone_id"]
+            if bot_zone_id == delivery_zone_id:
+                bot_location = (bot["location"]["lat"], bot["location"]["lon"])
+                delivery_location = (
+                    delivery["pickup"]["pickup_lat"],
+                    delivery["pickup"]["pickup_lon"],
+                )
+                bot_distance_to_delivery = distance(bot_location, delivery_location).km
+                if bot_distance_to_delivery < min_distance:
+                    assigned_bot = bot
+                    min_distance = bot_distance_to_delivery
+        if assigned_bot is not None:
+            bot_ref = db.collection("bots").document(assigned_bot["id"])
+            bot_ref.update({"status": "busy", "delivery_id": delivery["id"]})
 
-#         if bots_query:
-#             # Calculate the distance between each bot and the order's pickup location
-#             bots = []
-#             for bot_doc in bots_query:
-#                 bot = bot_doc.to_dict()
-#                 bot_distance = calculate_distance(
-#                     bot["location"], order["pickup_location"]
-#                 )
-#                 bots.append({"bot_doc": bot_doc, "distance": bot_distance})
+            delivery_ref = db.collection("deliveries").document(delivery["id"])
+            delivery_ref.update({"state": "assigned"})
 
-#             # Sort the bots by distance (from closest to farthest)
-#             sorted_bots = sorted(bots, key=lambda x: x["distance"])
+            available_bots.remove(assigned_bot)
 
-#             # Assign the closest available bot to the order
-#             bot_doc = sorted_bots[0]["bot_doc"]
-#             bot_ref = bots_ref.document(bot_doc.id)
-#             bot_ref.update({"status": "busy"})
-#             delivery_ref.document(order_doc.id).update(
-#                 {"bot_id": bot_doc.id, "state": "assigned"}
-#             )
+    return jsonify({"message": "Bots assigned to pending deliveries successfully."})
 
-#     return jsonify({"message": "Bots assigned successfully."})
-
-
-# # Helper function to calculate the distance between two locations (in this case, represented as dictionaries with latitude and longitude keys)
-# def calculate_distance(location1, location2):
-#     lat1, lon1 = location1["latitude"], location1["longitude"]
-#     lat2, lon2 = location2["latitude"], location2["longitude"]
-#     radius = 6371  # km
-
-#     dlat = math.radians(lat2 - lat1)
-#     dlon = math.radians(lon2 - lon1)
-#     a = math.sin(dlat / 2) * math.sin(dlat / 2) + math.cos(
-#         math.radians(lat1)
-#     ) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) * math.sin(dlon / 2)
-#     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-#     distance = radius * c
-
-#     return distance
 
 if __name__ == "__main__":
     app.run()
