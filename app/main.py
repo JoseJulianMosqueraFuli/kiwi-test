@@ -23,6 +23,9 @@ from wtforms.fields import StringField, PasswordField, SubmitField
 from wtforms.validators import DataRequired
 from firebase_admin import firestore, credentials, initialize_app, auth
 from flask_cors import CORS
+from flasgger import Swagger
+from flasgger.utils import swag_from
+
 
 from werkzeug.security import generate_password_hash
 from flask_login import UserMixin, login_user
@@ -30,6 +33,7 @@ from flask_login import UserMixin, login_user
 app = Flask(__name__)
 bootstrap = Bootstrap(app)
 CORS(app)
+swagger = Swagger(app)
 
 app.config["SECRET_KEY"] = "secret_key"
 
@@ -59,6 +63,36 @@ def sign_in_with_email_and_password(
 
 
 @app.route("/login_user", methods=["POST"])
+@swag_from(
+    {
+        "summary": "Logs in a user",
+        "tags": ["Users"],
+        "description": "Logs in a user and returns a token",
+        "parameters": [
+            {
+                "name": "email",
+                "description": "The user's email",
+                "in": "formData",
+                "type": "string",
+                "required": True,
+            },
+            {
+                "name": "password",
+                "description": "The user's password",
+                "in": "formData",
+                "type": "string",
+                "required": True,
+            },
+        ],
+        "responses": {
+            "200": {
+                "description": "A token representing the user's session",
+                "schema": {"type": "string"},
+            },
+            "401": {"description": "Invalid credentials"},
+        },
+    }
+)
 def login_user():
     email = request.form.get("email")
     password = request.form.get("password")
@@ -69,6 +103,34 @@ def login_user():
 
 
 @app.route("/signup_user", methods=["POST"])
+@swag_from(
+    {
+        "summary": "Create a new user account",
+        "tags": ["Users"],
+        "parameters": [
+            {
+                "in": "body",
+                "name": "user",
+                "description": "The user object",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "email": {"type": "string"},
+                        "password": {"type": "string"},
+                        "display_name": {"type": "string"},
+                        "disabled": {"type": "boolean"},
+                    },
+                    "required": ["email", "password"],
+                },
+            }
+        ],
+        "responses": {
+            "200": {"description": "User account created successfully"},
+            "400": {"description": "Invalid request payload"},
+            "500": {"description": "Internal server error"},
+        },
+    }
+)
 def create_user():
     data = request.get_json()
     email = data.get("email")
@@ -241,6 +303,59 @@ def dashboard():
 
 
 @app.route("/deliveries", methods=["POST"])
+@swag_from(
+    {
+        "summary": "Create a new delivery",
+        "tags": ["Deliveries"],
+        "parameters": [
+            {
+                "name": "Authorization",
+                "in": "header",
+                "type": "string",
+                "required": True,
+                "description": "Bearer token for authentication",
+            },
+            {
+                "name": "body",
+                "in": "body",
+                "required": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "state": {"type": "string"},
+                        "pickup": {
+                            "type": "object",
+                            "properties": {
+                                "pickup_lat": {"type": "number"},
+                                "pickup_lon": {"type": "number"},
+                            },
+                        },
+                        "dropoff": {
+                            "type": "object",
+                            "properties": {
+                                "dropoff_lat": {"type": "number"},
+                                "dropoff_lon": {"type": "number"},
+                            },
+                        },
+                        "zone_id": {"type": "string"},
+                    },
+                    "required": ["state", "pickup", "dropoff", "zone_id"],
+                },
+            },
+        ],
+        "responses": {
+            "200": {
+                "description": "Delivery created",
+                "schema": {
+                    "type": "string",
+                    "example": "Delivery created with ID: a6db76a6-7bdc-431c-b14f-20251ca72fb7",
+                },
+            },
+            "400": {"description": "Invalid pickup or dropoff location"},
+            "401": {"description": "Unauthorized"},
+        },
+    }
+)
 def create_delivery():
     try:
         headers = request.headers
@@ -258,6 +373,9 @@ def create_delivery():
     dropoff_lat = data["dropoff"]["dropoff_lat"]
     dropoff_lon = data["dropoff"]["dropoff_lon"]
     zone_id = data["zone_id"]
+
+    if state not in ["pending", "assigned", "in_transit", "delivered"]:
+        return "Invalid state value", 400
 
     if not (-90 <= pickup_lat <= 90) or not (-180 <= pickup_lon <= 180):
         return "Invalid pickup location, check your values", 400
@@ -293,6 +411,47 @@ def create_delivery():
 
 
 @app.route("/deliveries", methods=["GET"])
+@swag_from(
+    {
+        "summary": "Get deliveries by creator_id or id.",
+        "tags": ["Deliveries"],
+        "parameters": [
+            {
+                "in": "query",
+                "name": "creator_id",
+                "type": "string",
+                "description": "Creator ID to filter deliveries by.",
+            },
+            {
+                "in": "query",
+                "name": "id",
+                "type": "string",
+                "description": "Delivery ID to retrieve.",
+            },
+        ],
+        "responses": {
+            200: {
+                "description": "A list of deliveries, or a single delivery if an ID is provided.",
+                "schema": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "name": {"type": "string"},
+                            "address": {"type": "string"},
+                            "creator_id": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            400: {"description": "The request is missing a required parameter."},
+            404: {
+                "description": "No deliveries found for provided creator_id, or delivery not found."
+            },
+        },
+    }
+)
 def get_deliveries():
     creator_id = flask.request.args.get("creator_id")
 
@@ -338,6 +497,114 @@ def get_deliveries():
 
 
 @app.route("/bots", methods=["POST"])
+@swag_from(
+    {
+        "tags": ["Bots"],
+        "summary": "Create a new bot.",
+        "parameters": [
+            {
+                "name": "bot_data",
+                "in": "body",
+                "description": "JSON data for the new bot.",
+                "required": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "status": {
+                            "type": "string",
+                            "description": "The current status of the bot.",
+                            "enum": ["available", "busy", "reserved"],
+                        },
+                        "location": {
+                            "type": "object",
+                            "description": "The current location of the bot.",
+                            "properties": {
+                                "lat": {
+                                    "type": "number",
+                                    "format": "float",
+                                    "description": "The latitude of the bot.",
+                                    "minimum": -90,
+                                    "maximum": 90,
+                                },
+                                "lon": {
+                                    "type": "number",
+                                    "format": "float",
+                                    "description": "The longitude of the bot.",
+                                    "minimum": -180,
+                                    "maximum": 180,
+                                },
+                            },
+                            "required": ["lat", "lon"],
+                        },
+                        "zone_id": {
+                            "type": "string",
+                            "description": "The ID of the zone that the bot is assigned to.",
+                        },
+                    },
+                    "required": ["status", "location", "zone_id"],
+                },
+            },
+        ],
+        "responses": {
+            "201": {
+                "description": "The new bot was created successfully.",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "The ID of the new bot.",
+                        },
+                        "status": {
+                            "type": "string",
+                            "description": "The current status of the bot.",
+                            "enum": ["available", "busy", "reserved"],
+                        },
+                        "location": {
+                            "type": "object",
+                            "description": "The current location of the bot.",
+                            "properties": {
+                                "lat": {
+                                    "type": "number",
+                                    "format": "float",
+                                    "description": "The latitude of the bot.",
+                                    "minimum": -90,
+                                    "maximum": 90,
+                                },
+                                "lon": {
+                                    "type": "number",
+                                    "format": "float",
+                                    "description": "The longitude of the bot.",
+                                    "minimum": -180,
+                                    "maximum": 180,
+                                },
+                            },
+                            "required": ["lat", "lon"],
+                        },
+                        "zone_id": {
+                            "type": "string",
+                            "description": "The ID of the zone that the bot is assigned to.",
+                        },
+                    },
+                    "required": ["id", "status", "location", "zone_id"],
+                },
+            },
+            "400": {
+                "description": "The latitude or longitude values in the request are invalid.",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "message": {
+                            "type": "string",
+                            "description": "A description of the error.",
+                        },
+                    },
+                    "required": ["message"],
+                },
+            },
+        },
+    },
+)
 def create_bot():
     data = flask.request.get_json()
     if not data:
@@ -347,6 +614,10 @@ def create_bot():
     lon = data["location"]["lon"]
     if lat < -90 or lat > 90 or lon < -180 or lon > 180:
         return flask.jsonify({"message": "Invalid latitude or longitude values."}), 400
+
+    status = data["status"]
+    if status not in ["available", "busy", "reserved"]:
+        return flask.jsonify({"message": "Invalid status value."}), 400
 
     bot_id = str(uuid.uuid4())
     bot_doc = {
@@ -436,6 +707,7 @@ def assign_bots_to_pending_deliveries():
                 if bot_distance_to_delivery < min_distance:
                     assigned_bot = bot
                     min_distance = bot_distance_to_delivery
+
         if assigned_bot is not None:
             bot_ref = db.collection("bots").document(assigned_bot["id"])
             bot_ref.update({"status": "busy", "delivery_id": delivery["id"]})
