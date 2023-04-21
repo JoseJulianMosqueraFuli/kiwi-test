@@ -23,7 +23,7 @@ This is a very simple example, the way to use
 
 To run this API on your local machine, follow these steps:
 
-Clone the repository: git clone https://github.com/josejulianmosquera/kiwi-test
+Clone the repository: git clone https://github.com/josejulianmosquera/kiwi-test.git
 Navigate into the cloned directory: cd kiwi-test
 Build and run the Docker container: docker-compose up --build
 The API should now be available at http://localhost:5000.
