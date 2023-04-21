@@ -23,7 +23,7 @@ This is a very simple example, the way to use
 
 To run this API on your local machine, follow these steps:
 
-Clone the repository: git clone https://github.com/josejulianmosquera/kiwi-test.git
+Clone the repository: git clone https://github.com/josejulianmosquera/kiwi-test
 Navigate into the cloned directory: cd dockerized-api
 Copy the .env.example file and rename it to .env: cp .env.example .env
 Fill out the environment variables in the .env file with your Firebase project's credentials and desired configurations.
@@ -34,7 +34,12 @@ The API should now be available at http://localhost:5000.
 
 ## Version
 
-version 1- deadline study case
+### v1 deadline study case
+#### Improvements:
+  -keys security
+  -test 
+  -documentation.
+
 
 ## Author
 
