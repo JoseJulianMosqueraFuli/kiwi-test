@@ -10,7 +10,7 @@ This is the API built up to the deadline of the case study, in branch master.
 ## Index
 
 1. [ Project sample ](#sample)
-2. [ Using the app in the cloud ](#getting-started)
+2. [ Getting started ](#getting-started)
 3. [ Available endpoints ](#available-endpoints)
 
 ### Sample
