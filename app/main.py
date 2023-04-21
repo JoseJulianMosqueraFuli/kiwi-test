@@ -5,6 +5,7 @@ import json
 import uuid
 import requests
 import datetime
+import math
 
 from flask import (
     Flask,
@@ -453,7 +454,12 @@ def create_delivery():
     }
 )
 def get_deliveries():
-    creator_id = flask.request.args.get("creator_id")
+    per_page = int(request.args.get("per_page", 10))
+    page = int(request.args.get("page", 1))
+    start = (page - 1) * per_page
+
+    creator_id = request.args.get("creator_id")
+    delivery_id = request.args.get("id")
 
     if creator_id:
         delivery_ids = [
@@ -462,38 +468,39 @@ def get_deliveries():
             .where("creator_id", "==", creator_id)
             .stream()
         ]
+    elif delivery_id:
+        delivery_ids = [delivery_id]
+    else:
+        return (
+            flask.jsonify({"message": "Please provide either creator_id or id."}),
+            400,
+        )
 
-        deliveries = [
-            doc.to_dict()
-            for doc in db.collection("deliveries")
-            .where("id", "in", delivery_ids)
-            .stream()
-        ]
+    total_deliveries = len(delivery_ids)
+    delivery_ids = delivery_ids[start : start + per_page]
 
-        if not deliveries:
-            return (
-                flask.jsonify(
-                    {"message": "No deliveries found for provided creator_id."}
-                ),
-                404,
-            )
+    deliveries = [
+        doc.to_dict()
+        for doc in db.collection("deliveries").where("id", "in", delivery_ids).stream()
+    ]
 
-        return flask.jsonify(deliveries)
+    if not deliveries:
+        return (
+            flask.jsonify(
+                {"message": "No deliveries found for provided creator_id or id."}
+            ),
+            404,
+        )
 
-    delivery_id = flask.request.args.get("id")
-    if delivery_id:
-        doc_ref = db.collection("deliveries").document(delivery_id)
-        doc = doc_ref.get()
-        if doc.exists:
-            delivery = doc.to_dict()
-            return flask.jsonify(delivery)
-        else:
-            return flask.jsonify({"message": "Delivery not found."}), 404
+    response = {
+        "deliveries": deliveries,
+        "total_pages": math.ceil(total_deliveries / per_page),
+        "current_page": page,
+        "per_page": per_page,
+        "total_deliveries": total_deliveries,
+    }
 
-    return (
-        flask.jsonify({"message": "Please provide an id or creator_id parameter."}),
-        400,
-    )
+    return flask.jsonify(response)
 
 
 @app.route("/bots", methods=["POST"])
